@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass
 from collections import Counter
-from loguru import logger
-
+import logging
+logger = logging.getLogger(__name__)
 
 @dataclass
 class LanguageInfo:
@@ -37,7 +37,7 @@ class ProjectLanguageProfile:
     confidence_score: float  # 0.0 to 1.0
 
 
-class LanguageIdentifierAgent:
+class LanguageIdentifier:
     """Agent responsible for identifying programming languages and frameworks in repositories."""
     
     def __init__(self):
@@ -163,7 +163,7 @@ class LanguageIdentifierAgent:
             confidence_score=confidence
         )
         
-        logger.success(f"Language analysis completed. Primary language: {primary_language}")
+        logger.info(f"Language analysis completed. Primary language: {primary_language}")
         return profile
     
     def _analyze_file_extensions(self, path: str) -> Dict[str, Dict[str, int]]:
