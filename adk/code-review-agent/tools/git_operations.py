@@ -38,34 +38,6 @@ except ImportError:
     Github = None
     Gitlab = None
 
-# Import debug logging
-try:
-    from src.core.logging import debug_trace, get_debug_logger
-except ImportError:
-    # Fallback for testing environment
-    def debug_trace(func):
-        return func
-    
-    class MockDebugLogger:
-        def __init__(self):
-            from loguru import logger
-            self.logger = logger
-            
-        def log_step(self, message, data=None):
-            self.logger.info(f"{message}: {data}")
-            
-        def log_error(self, error, data=None):
-            self.logger.error(f"Error: {error} - {data}")
-            
-        def log_performance_metric(self, metric, value, unit):
-            self.logger.info(f"Performance: {metric}={value}{unit}")
-            
-        def log_data(self, stage, data):
-            self.logger.info(f"Data [{stage}]: {data}")
-    
-    def get_debug_logger():
-        return MockDebugLogger()
-
 
 @dataclass
 class RepositoryInfo:
@@ -137,19 +109,16 @@ class GitOperationsAgent:
         self.temp_dir = temp_dir or tempfile.gettempdir()
         self.base_clone_dir = Path(self.temp_dir) / "ai_codescan_repos"
         self.base_clone_dir.mkdir(exist_ok=True)
-        
-        # Setup debug logger reference
-        self._debug_logger = get_debug_logger()
-        
+              
         # Log agent initialization
-        self._debug_logger.log_step("GitOperationsAgent initialized", {
+        logger.info("GitOperationsAgent initialized", extra={
             "temp_dir": str(self.temp_dir),
             "base_clone_dir": str(self.base_clone_dir),
             "github_available": GITHUB_AVAILABLE,
             "gitlab_available": GITLAB_AVAILABLE
         })
         
-    @debug_trace
+    
     def clone_repository(
         self, 
         repo_url: str, 
@@ -175,7 +144,7 @@ class GitOperationsAgent:
             GitCommandError: If clone operation fails
             ValueError: If repository URL is invalid
         """
-        self._debug_logger.log_step("Starting repository clone", {
+        logger.info("Starting repository clone", extra={
             "repo_url": repo_url,
             "depth": depth,
             "branch": branch,
@@ -185,21 +154,21 @@ class GitOperationsAgent:
         # Validate repository URL
         if not self._is_valid_git_url(repo_url):
             error_msg = f"Invalid Git repository URL: {repo_url}"
-            self._debug_logger.log_error(ValueError(error_msg), {"repo_url": repo_url})
+            logger.error(f"Invalid Git repository URL: {repo_url}", extra={"repo_url": repo_url})
             raise ValueError(error_msg)
         
         # Generate local path if not provided
         if local_path is None:
             repo_name = self._extract_repo_name(repo_url)
             local_path = str(self.base_clone_dir / repo_name)
-            self._debug_logger.log_step("Generated local path", {
+            logger.info("Generated local path", extra={
                 "repo_name": repo_name,
                 "local_path": local_path
             })
         
         # Clean existing directory if it exists
         if os.path.exists(local_path):
-            self._debug_logger.log_step("Cleaning existing directory", {"path": local_path})
+            logger.info("Cleaning existing directory", extra={"path": local_path})
             shutil.rmtree(local_path)
         
         try:
@@ -212,20 +181,20 @@ class GitOperationsAgent:
             # Add branch if specified
             if branch:
                 clone_kwargs['branch'] = branch
-                self._debug_logger.log_step("Using specific branch", {"branch": branch})
+                logger.info("Using specific branch", extra={"branch": branch})
             
             # Add authentication if PAT provided
             auth_url = repo_url
             if pat:
                 auth_url = self._add_auth_to_url(repo_url, pat)
-                self._debug_logger.log_step("Added authentication to URL", {"has_auth": True})
+                logger.info("Added authentication to URL", extra={"has_auth": True})
             
             # Performance tracking
             import time
             clone_start_time = time.time()
             
             # Clone repository
-            self._debug_logger.log_step("Executing git clone", {
+            logger.info("Executing git clone", extra={
                 "target_path": local_path,
                 "clone_args": {k: v for k, v in clone_kwargs.items() if k != 'branch'}
             })
@@ -233,12 +202,12 @@ class GitOperationsAgent:
             repo = Repo.clone_from(auth_url, local_path, **clone_kwargs)
             
             clone_duration = time.time() - clone_start_time
-            self._debug_logger.log_performance_metric("git_clone_duration", clone_duration, "seconds")
+            logger.info(f"Git clone duration: {clone_duration:.2f} seconds")
             
             # Extract repository information
             repo_info = self._extract_repository_info(repo, repo_url, local_path)
             
-            self._debug_logger.log_step("Repository clone completed successfully", {
+            logger.info("Repository clone completed successfully", extra={
                 "local_path": local_path,
                 "duration": f"{clone_duration:.2f}s",
                 "repo_info": {
@@ -252,7 +221,7 @@ class GitOperationsAgent:
             return repo_info
             
         except GitCommandError as e:
-            self._debug_logger.log_error(e, {
+            logger.error(f"Git clone failed: {e}", extra={
                 "repo_url": repo_url,
                 "local_path": local_path,
                 "clone_kwargs": clone_kwargs
@@ -261,10 +230,10 @@ class GitOperationsAgent:
             # Clean up failed clone attempt
             if os.path.exists(local_path):
                 shutil.rmtree(local_path)
-                self._debug_logger.log_step("Cleaned up failed clone", {"path": local_path})
+                logger.info("Cleaned up failed clone", extra={"path": local_path})
             raise
         except Exception as e:
-            self._debug_logger.log_error(e, {
+            logger.error(f"Repository clone error: {e}", extra={
                 "repo_url": repo_url,
                 "local_path": local_path,
                 "operation": "clone_repository"
@@ -274,7 +243,7 @@ class GitOperationsAgent:
                 shutil.rmtree(local_path)
             raise
     
-    @debug_trace
+    
     def get_repository_info(self, local_path: str) -> RepositoryInfo:
         """
         Get information about an existing local repository.
@@ -285,11 +254,11 @@ class GitOperationsAgent:
         Returns:
             RepositoryInfo object
         """
-        self._debug_logger.log_step("Getting repository info", {"local_path": local_path})
+        logger.info("Getting repository info", extra={"local_path": local_path})
         
         if not os.path.exists(local_path):
             error_msg = f"Repository path does not exist: {local_path}"
-            self._debug_logger.log_error(FileNotFoundError(error_msg), {"path": local_path})
+            logger.error(f"Repository path not found: {local_path}", extra={"path": local_path})
             raise FileNotFoundError(error_msg)
         
         try:
@@ -299,7 +268,7 @@ class GitOperationsAgent:
             
             repo_info = self._extract_repository_info(repo, remote_url, local_path)
             
-            self._debug_logger.log_step("Repository info extracted", {
+            logger.info("Repository info extracted", extra={
                 "remote_url": remote_url,
                 "info": {
                     "commit_hash": repo_info.commit_hash,
@@ -310,10 +279,10 @@ class GitOperationsAgent:
             
             return repo_info
         except Exception as e:
-            self._debug_logger.log_error(e, {"local_path": local_path, "operation": "get_repository_info"})
+            logger.error(f"Get repository info error: {e}", extra={"local_path": local_path, "operation": "get_repository_info"})
             raise
     
-    @debug_trace
+    
     def cleanup_repository(self, local_path: str) -> bool:
         """
         Clean up cloned repository by removing local directory.
@@ -324,21 +293,21 @@ class GitOperationsAgent:
         Returns:
             True if cleanup successful, False otherwise
         """
-        self._debug_logger.log_step("Cleaning up repository", {"path": local_path})
+        logger.info("Cleaning up repository", extra={"path": local_path})
         
         try:
             if os.path.exists(local_path):
                 shutil.rmtree(local_path)
-                self._debug_logger.log_step("Repository cleanup successful", {"path": local_path})
+                logger.info("Repository cleanup successful", extra={"path": local_path})
                 return True
             else:
-                self._debug_logger.log_step("Repository path not found", {"path": local_path})
+                logger.info("Repository path not found", extra={"path": local_path})
                 return True  # Already clean
         except Exception as e:
-            self._debug_logger.log_error(e, {"operation": "cleanup", "path": local_path})
+            logger.error(f"Cleanup error: {e}", extra={"operation": "cleanup", "path": local_path})
             return False
 
-    @debug_trace
+    
     def is_valid_repository_url(self, url: str) -> bool:
         """
         Public method to validate repository URL.
@@ -364,7 +333,7 @@ class GitOperationsAgent:
             ]
             is_valid = any(pattern in url.lower() for pattern in valid_patterns)
             
-            self._debug_logger.log_step("URL validation", {
+            logger.info("URL validation", extra={
                 "url": url,
                 "is_valid": is_valid,
                 "matched_patterns": [p for p in valid_patterns if p in url.lower()]
@@ -372,7 +341,7 @@ class GitOperationsAgent:
             
             return is_valid
         except Exception as e:
-            self._debug_logger.log_error(e, {"url": url, "operation": "url_validation"})
+            logger.error(f"URL validation error: {e}", extra={"url": url, "operation": "url_validation"})
             return False
     
     def _extract_repo_name(self, repo_url: str) -> str:
@@ -387,7 +356,7 @@ class GitOperationsAgent:
         # Get last part of path (repo name)
         repo_name = path.split('/')[-1] if '/' in path else path
         
-        self._debug_logger.log_step("Extracted repository name", {
+        logger.info("Extracted repository name", extra={
             "repo_url": repo_url,
             "repo_name": repo_name,
             "parsed_path": path
@@ -407,7 +376,7 @@ class GitOperationsAgent:
         else:
             auth_url = url.replace('https://', f'https://{pat}@')
         
-        self._debug_logger.log_step("Added authentication to URL", {
+        logger.info("Added authentication to URL", extra={
             "original_domain": parsed.netloc,
             "auth_added": True
         })
@@ -421,7 +390,7 @@ class GitOperationsAgent:
         local_path: str
     ) -> RepositoryInfo:
         """Extract comprehensive repository information."""
-        self._debug_logger.log_step("Extracting repository information", {
+        logger.info("Extracting repository information", extra={
             "repo_url": repo_url,
             "local_path": local_path
         })
@@ -451,7 +420,7 @@ class GitOperationsAgent:
                 file_count=file_count
             )
             
-            self._debug_logger.log_data("repository_info", {
+            logger.info("Repository information extracted", extra={
                 "url": repo_url,
                 "branch": default_branch,
                 "commit_hash": commit_hash[:8],  # Short hash for logging
@@ -462,13 +431,12 @@ class GitOperationsAgent:
             })
             
             # Log performance metrics
-            self._debug_logger.log_performance_metric("repo_size_mb", size_mb, "MB")
-            self._debug_logger.log_performance_metric("repo_file_count", file_count, "files")
+            logger.info(f"Repository metrics - Size: {size_mb:.2f} MB, Files: {file_count}")
             
             return repo_info
             
         except Exception as e:
-            self._debug_logger.log_error(e, {
+            logger.error(f"Extract repository info error: {e}", extra={
                 "repo_url": repo_url,
                 "local_path": local_path,
                 "operation": "extract_repository_info"
@@ -487,7 +455,7 @@ class GitOperationsAgent:
             
             size_mb = total_size / (1024 * 1024)
             
-            self._debug_logger.log_step("Calculated repository size", {
+            logger.info("Calculated repository size", extra={
                 "path": path,
                 "total_bytes": total_size,
                 "size_mb": round(size_mb, 2)
@@ -495,7 +463,7 @@ class GitOperationsAgent:
             
             return size_mb
         except Exception as e:
-            self._debug_logger.log_error(e, {"path": path, "operation": "calculate_repo_size"})
+            logger.error(f"Calculate repo size error: {e}", extra={"path": path, "operation": "calculate_repo_size"})
             return 0.0
     
     def _count_files(self, path: str) -> int:
@@ -505,14 +473,14 @@ class GitOperationsAgent:
             for root, dirs, files in os.walk(path):
                 file_count += len(files)
             
-            self._debug_logger.log_step("Counted repository files", {
+            logger.info("Counted repository files", extra={
                 "path": path,
                 "file_count": file_count
             })
             
             return file_count
         except Exception as e:
-            self._debug_logger.log_error(e, {"path": path, "operation": "count_files"})
+            logger.error(f"Count files error: {e}", extra={"path": path, "operation": "count_files"})
             return 0
     
     def _detect_basic_languages(self, path: str) -> List[str]:
@@ -545,7 +513,7 @@ class GitOperationsAgent:
             
             languages = list(detected_languages)
             
-            self._debug_logger.log_step("Detected programming languages", {
+            logger.info("Detected programming languages", extra={
                 "path": path,
                 "languages": languages,
                 "total_languages": len(languages)
@@ -553,11 +521,11 @@ class GitOperationsAgent:
             
             return languages
         except Exception as e:
-            self._debug_logger.log_error(e, {"path": path, "operation": "detect_basic_languages"})
+            logger.error(f"Detect languages error: {e}", extra={"path": path, "operation": "detect_basic_languages"})
             return []
     
     # Pull Request Analysis Methods
-    @debug_trace
+    
     def get_pr_details(
         self, 
         repo_url: str, 
@@ -579,7 +547,7 @@ class GitOperationsAgent:
             ValueError: If platform not supported or PR not found
             Exception: If API call fails
         """
-        self._debug_logger.log_step("Starting PR details fetch", {
+        logger.info("Starting PR details fetch", extra={
             "repo_url": repo_url,
             "pr_id": pr_id,
             "has_pat": bool(pat)
@@ -598,14 +566,14 @@ class GitOperationsAgent:
                 return self._fetch_git_pr(repo_url, pr_id, pat)
                 
         except Exception as e:
-            self._debug_logger.log_error(e, {
+            logger.error(f"Get PR details error: {e}", extra={
                 "repo_url": repo_url,
                 "pr_id": pr_id,
                 "operation": "get_pr_details"
             })
             raise
     
-    @debug_trace
+    
     def _fetch_github_pr(
         self, 
         repo_url: str, 
@@ -614,10 +582,7 @@ class GitOperationsAgent:
     ) -> PullRequestInfo:
         """Fetch PR details from GitHub API."""
         if not GITHUB_AVAILABLE:
-            self._debug_logger.log_error(
-                ImportError("PyGithub not available"), 
-                {"fallback": "git_pr_fetch"}
-            )
+            logger.error("PyGithub not available, falling back to git_pr_fetch")
             return self._fetch_git_pr(repo_url, pr_id, pat)
         
         try:
@@ -629,7 +594,7 @@ class GitOperationsAgent:
             repo = github.get_repo(f"{owner}/{repo_name}")
             pr = repo.get_pull(int(pr_id))
             
-            self._debug_logger.log_step("Fetched GitHub PR", {
+            logger.info("Fetched GitHub PR", extra={
                 "owner": owner,
                 "repo": repo_name,
                 "pr_number": pr_id,
@@ -686,7 +651,7 @@ class GitOperationsAgent:
             return pr_info
             
         except Exception as e:
-            self._debug_logger.log_error(e, {
+            logger.error(f"Fetch GitHub PR error: {e}", extra={
                 "repo_url": repo_url,
                 "pr_id": pr_id,
                 "operation": "fetch_github_pr"
@@ -694,7 +659,7 @@ class GitOperationsAgent:
             # Fallback to git-based approach
             return self._fetch_git_pr(repo_url, pr_id, pat)
     
-    @debug_trace
+    
     def _fetch_gitlab_pr(
         self, 
         repo_url: str, 
@@ -703,10 +668,7 @@ class GitOperationsAgent:
     ) -> PullRequestInfo:
         """Fetch PR details from GitLab API."""
         if not GITLAB_AVAILABLE:
-            self._debug_logger.log_error(
-                ImportError("python-gitlab not available"), 
-                {"fallback": "git_pr_fetch"}
-            )
+            logger.error("python-gitlab not available, falling back to git_pr_fetch")
             return self._fetch_git_pr(repo_url, pr_id, pat)
         
         try:
@@ -718,7 +680,7 @@ class GitOperationsAgent:
             project = gitlab.projects.get(project_path)
             mr = project.mergerequests.get(int(pr_id))
             
-            self._debug_logger.log_step("Fetched GitLab MR", {
+            logger.info("Fetched GitLab MR", extra={
                 "project_path": project_path,
                 "mr_iid": pr_id,
                 "mr_title": mr.title
@@ -769,7 +731,7 @@ class GitOperationsAgent:
             return pr_info
             
         except Exception as e:
-            self._debug_logger.log_error(e, {
+            logger.error(f"Fetch GitLab PR error: {e}", extra={
                 "repo_url": repo_url,
                 "pr_id": pr_id,
                 "operation": "fetch_gitlab_pr"
@@ -777,7 +739,7 @@ class GitOperationsAgent:
             # Fallback to git-based approach
             return self._fetch_git_pr(repo_url, pr_id, pat)
     
-    @debug_trace
+    
     def _fetch_git_pr(
         self, 
         repo_url: str, 
@@ -790,7 +752,7 @@ class GitOperationsAgent:
         This is a simplified approach that creates a basic PR info
         when API access is not available.
         """
-        self._debug_logger.log_step("Using Git fallback for PR fetch", {
+        logger.info("Using Git fallback for PR fetch", extra={
             "repo_url": repo_url,
             "pr_id": pr_id
         })
@@ -880,7 +842,7 @@ class GitOperationsAgent:
             
             return response.text
         except Exception as e:
-            self._debug_logger.log_error(e, {"operation": "fetch_pr_diff_github"})
+            logger.error(f"Fetch PR diff GitHub error: {e}", extra={"operation": "fetch_pr_diff_github"})
             return f"Error fetching diff: {str(e)}"
     
     def _parse_pr_files(self, pr) -> Tuple[List[str], List[str], List[str], List[str]]:
@@ -906,5 +868,5 @@ class GitOperationsAgent:
             return changed_files, files_added, files_modified, files_deleted
             
         except Exception as e:
-            self._debug_logger.log_error(e, {"operation": "parse_pr_files"})
+            logger.error(f"Parse PR files error: {e}", extra={"operation": "parse_pr_files"})
             return [], [], [], [] 
